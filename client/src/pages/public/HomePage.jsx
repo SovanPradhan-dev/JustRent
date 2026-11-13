@@ -14,6 +14,7 @@ const categories = [
 export default function HomePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const supportEmail = import.meta.env.VITE_SUPPORT_EMAIL;
   const [journey, setJourney] = useState({ pickup: '', destination: '', pickupAt: '', passengers: '1' });
   const searchJourney = (event) => {
     event.preventDefault();
@@ -72,11 +73,11 @@ export default function HomePage() {
 
         <section id="fleet" className="fleet-cta"><div className="fleet-cta-art" /><div><span className="eyebrow">FOR FLEETS & VEHICLE OWNERS</span><h2>Your vehicles.<br />More opportunity.</h2><p>One place to manage vehicles, drivers, bookings and live operations—built for the people who keep every journey moving.</p><Link className="button button-brand" to="/register">Partner with us <ArrowRight size={17} /></Link></div><div className="cta-stat"><strong><Sparkles size={21} /></strong><span>Made for the people<br />behind the journey.</span></div></section>
 
-        <section className="quote-section"><span className="eyebrow">A MORE HUMAN WAY TO MOVE</span><blockquote>“The difference is in the details. Knowing who’s arriving, what to expect, and that someone has thought it through.”</blockquote><div className="quote-byline"><span className="quote-avatar">M</span><span><b>Meera S.</b><small>Passenger, Kolkata</small></span></div><div className="quote-pips"><i /><i /><i /></div></section>
+        <section className="quote-section"><span className="eyebrow">A MORE HUMAN WAY TO MOVE</span><blockquote>Every journey deserves clear details, trusted people and the confidence that someone has thought it through.</blockquote><div className="quote-pips"><i /></div></section>
 
         <section className="faq-section"><div><span className="eyebrow">GOOD TO KNOW</span><h2>A few things<br />you might wonder.</h2><p>Still have a question? We’re happy to help.</p><Link to="/about" className="faq-link">Visit our help centre <ArrowRight size={15} /></Link></div><div className="faq-list">{[['What is Vehicle Connect?','A marketplace that connects passengers with verified commercial vehicle owners, fleets and professional drivers.'],['Where are you available?','We are beginning in Kolkata, West Bengal, with plans to grow alongside our partner fleets.'],['How do I become a fleet partner?','Register as an individual owner or fleet company to create your workspace and submit your details for review.'],['When can I book a vehicle?','Booking availability depends on approved local compliance, vehicle verification and service-area coverage.']].map(([q,a])=><details key={q}><summary>{q}<ChevronDown size={18} /></summary><p>{a}</p></details>)}</div></section>
       </main>
-      <footer className="public-footer"><div className="footer-main"><div><Brand inverse /><p>Thoughtful journeys. Trusted vehicles.<br />A better way to move, together.</p></div><div><b>Explore</b><Link to="/about">About us</Link><a href="#how">How it works</a><a href="#vehicles">Vehicles</a></div><div><b>Partner with us</b><Link to="/register">Vehicle owners</Link><Link to="/register">Fleet companies</Link><Link to="/register">Professional drivers</Link></div><div><b>Get in touch</b><a href="mailto:hello@vehicleconnect.in">hello@vehicleconnect.in</a><span>Kolkata, West Bengal</span></div></div><div className="footer-bottom"><span>© 2026 Vehicle Connect. Built around better journeys.</span><span>Privacy &nbsp;·&nbsp; Terms &nbsp;·&nbsp; Accessibility</span></div></footer>
+      <footer className="public-footer"><div className="footer-main"><div><Brand inverse /><p>Thoughtful journeys. Trusted vehicles.<br />A better way to move, together.</p></div><div><b>Explore</b><Link to="/about">About us</Link><a href="#how">How it works</a><a href="#vehicles">Vehicles</a></div><div><b>Partner with us</b><Link to="/register">Vehicle owners</Link><Link to="/register">Fleet companies</Link><Link to="/register">Professional drivers</Link></div><div><b>Get in touch</b>{supportEmail?<a href={`mailto:${supportEmail}`}>{supportEmail}</a>:<span>Support contact details are being configured.</span>}<span>Kolkata, West Bengal</span></div></div><div className="footer-bottom"><span>© 2026 Vehicle Connect. Built around better journeys.</span><span>Privacy &nbsp;·&nbsp; Terms &nbsp;·&nbsp; Accessibility</span></div></footer>
     </div>
   );
 }

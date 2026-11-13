@@ -43,7 +43,7 @@ async function validateFile(file) {
   finally { await handle.close(); }
   if ((file.mimetype === 'application/pdf' && header.toString('ascii', 0, 4) === '%PDF') ||
       (file.mimetype === 'image/jpeg' && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) ||
-      (file.mimetype === 'image/png' && header.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return;
+      (file.mimetype === 'image/png' && header.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))) return;
   await unlink(file.path);
   const error = new Error('The uploaded file content does not match an allowed document type.');
   error.status = 400;

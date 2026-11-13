@@ -19,6 +19,8 @@ const bookingSchema = new mongoose.Schema({
     waiting: Number,
     tolls: Number,
     parking: Number,
+    distanceKilometres: Number,
+    estimatedMinutes: Number,
     taxes: Number,
     platformFee: Number,
     discount: Number,

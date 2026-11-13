@@ -5,7 +5,7 @@ import { authenticate, allowRoles } from '../middleware/auth.js';
 import { Booking, DriverLocation, DriverProfile, DriverVehicleAssignment, Fleet, Trip, User, Vehicle } from '../models/index.js';
 import { calculateFare } from '../services/pricingService.js';
 import { canTransitionBooking } from '../services/bookingRules.js';
-import { platformSetting, publicBookingsEnabled } from '../services/platformSettings.js';
+import { publicBookingsEnabled } from '../services/platformSettings.js';
 import { driverComplianceApproved, fleetComplianceApproved, vehicleComplianceApproved } from '../services/complianceService.js';
 
 const router = Router();
@@ -26,7 +26,7 @@ router.post('/', authenticate, allowRoles('passenger'), async (req, res, next) =
     if (!(await publicBookingsEnabled())) return res.status(423).json({ message: 'Public booking is not active in this service area yet. Local compliance approval and platform activation are both required.' });
     const { vehicleId, pickup, destination, pickupAt, passengerCount, type = 'instant' } = req.body;
     if (!['instant', 'request'].includes(type)) return res.status(400).json({ message: 'Booking type must be instant or request.' });
-    if (req.body.negotiatedPricing && (process.env.NEGOTIATED_PRICING_ENABLED !== 'true' || !(await platformSetting('negotiatedPricingEnabled')))) return res.status(403).json({ message: 'Negotiated pricing is not enabled for this service area.' });
+    if (req.body.negotiatedPricing) return res.status(501).json({ message: 'Negotiated pricing is not active. Fleet counter-offer processing must be enabled before this option can be offered.' });
     const pickupCoordinates = toPoint(pickup?.coordinates);
     const destinationCoordinates = toPoint(destination?.coordinates);
     const departure = new Date(pickupAt);
@@ -40,7 +40,7 @@ router.post('/', authenticate, allowRoles('passenger'), async (req, res, next) =
     ]);
     if (!fleetCompliant || !vehicleCompliant) return res.status(409).json({ message: 'This fleet or vehicle is missing current, approved compliance documents.' });
     if (vehicle.seatingCapacity < Number(passengerCount)) return res.status(400).json({ message: 'This vehicle does not have enough seats for your passengers.' });
-    const fare = await calculateFare(vehicle.category, pickupCoordinates, destinationCoordinates, Number(req.body.estimatedMinutes || 0));
+    const fare = await calculateFare(vehicle.category, pickupCoordinates, destinationCoordinates);
     const pickupCode = String(randomInt(100000, 1000000));
     const booking = await Booking.create({
       passengerId: req.user.id, fleetId: vehicle.fleetId.id, vehicleId: vehicle.id,
@@ -49,7 +49,7 @@ router.post('/', authenticate, allowRoles('passenger'), async (req, res, next) =
       destination: { label: destination.label, location: { type: 'Point', coordinates: destinationCoordinates } },
       pickupAt: departure, passengerCount: Number(passengerCount), fare,
       pickupOtpHash: await bcrypt.hash(pickupCode, 10),
-      negotiatedPricing: Boolean(req.body.negotiatedPricing)
+      negotiatedPricing: false
     });
     req.app.get('io').to(`fleet:${vehicle.fleetId.id}`).emit('booking:new', { bookingId: booking.id, vehicleId: vehicle.id, pickupAt: booking.pickupAt });
     return res.status(201).json({ booking, pickupCode });
@@ -109,16 +109,18 @@ router.patch('/:id/accept', authenticate, allowRoles('individual_owner', 'fleet_
     if (!assignment || !vehicle || vehicle.seatingCapacity < booking.passengerCount) return res.status(400).json({ message: 'Choose a verified vehicle and its currently assigned driver with enough seats.' });
     const conflict = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: activeStatuses }, pickupAt: { $gte: new Date(Date.now() - 3 * 3600000), $lte: new Date(booking.pickupAt.getTime() + 3 * 3600000) } });
     if (conflict) return res.status(409).json({ message: 'The selected driver has a conflicting active booking.' });
-    booking.vehicleId = vehicle.id;
-    booking.driverId = assignment.driverId._id;
-    booking.status = 'confirmed';
-    await booking.save();
-    await Trip.create({ bookingId: booking.id, fleetId: booking.fleetId, vehicleId: vehicle.id, driverId: assignment.driverId._id });
+    const acceptedBooking = await Booking.findOneAndUpdate(
+      { _id: booking.id, fleetId: req.user.fleetId, status: 'pending' },
+      { $set: { vehicleId: vehicle.id, driverId: assignment.driverId._id, status: 'confirmed' } },
+      { new: true, runValidators: true }
+    );
+    if (!acceptedBooking) return res.status(409).json({ message: 'This booking was already handled by another fleet dispatcher.' });
+    await Trip.create({ bookingId: acceptedBooking.id, fleetId: acceptedBooking.fleetId, vehicleId: vehicle.id, driverId: assignment.driverId._id });
     const io = req.app.get('io');
-    broadcast(io, booking, 'booking:accepted');
-    io.to(`user:${assignment.driverId._id}`).emit('booking:assigned', { bookingId: booking.id });
-    io.to(`booking:${booking.id}`).emit('booking:confirmation', { bookingId: booking.id, status: booking.status });
-    return res.json({ booking });
+    broadcast(io, acceptedBooking, 'booking:accepted');
+    io.to(`user:${assignment.driverId._id}`).emit('booking:assigned', { bookingId: acceptedBooking.id });
+    io.to(`booking:${acceptedBooking.id}`).emit('booking:confirmation', { bookingId: acceptedBooking.id, status: acceptedBooking.status });
+    return res.json({ booking: acceptedBooking });
   } catch (error) { return next(error); }
 });
 

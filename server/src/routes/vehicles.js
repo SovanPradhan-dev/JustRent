@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { Booking, DriverProfile, DriverVehicleAssignment, Fleet, User, Vehicle } from '../models/index.js';
+import { Booking, DriverProfile, DriverVehicleAssignment, Fleet, User, Vehicle, VehicleDocument } from '../models/index.js';
 import { calculateFare } from '../services/pricingService.js';
 import { publicBookingsEnabled } from '../services/platformSettings.js';
 import { driverComplianceApproved, fleetComplianceApproved, vehicleComplianceApproved } from '../services/complianceService.js';
@@ -48,7 +48,7 @@ router.get('/search', allowRoles('passenger'), async (req, res, next) => {
       if (!fleetCompliant || !vehicleCompliant || !driverCompliant) continue;
       const activeTrip = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
       if (activeTrip) continue;
-      const fare = await calculateFare(vehicle.category, origin, destination, Number(req.query.estimatedMinutes || 0));
+      const fare = await calculateFare(vehicle.category, origin, destination);
       vehicles.push({ vehicle, fleet: vehicle.fleetId, driver: assignment.driverId, fare });
     }
     return res.json({ vehicles });
@@ -66,7 +66,17 @@ router.post('/', allowRoles('individual_owner', 'fleet_company'), async (req, re
   try {
     const fleet = await Fleet.findById(req.user.fleetId);
     if (!fleet) return res.status(409).json({ message: 'Owner fleet setup is incomplete.' });
-    const vehicle = await Vehicle.create({ ...req.body, fleetId: fleet.id });
+    const vehicle = await Vehicle.create({
+      fleetId: fleet.id,
+      registrationNumber: req.body.registrationNumber,
+      make: req.body.make,
+      model: req.body.model,
+      category: req.body.category,
+      seatingCapacity: req.body.seatingCapacity,
+      airConditioned: req.body.airConditioned,
+      amenities: req.body.amenities,
+      imageUrl: req.body.imageUrl
+    });
     return res.status(201).json({ vehicle });
   } catch (error) { return next(error); }
 });
@@ -75,8 +85,16 @@ router.patch('/:id', allowRoles('individual_owner', 'fleet_company'), async (req
   try {
     const allowed = ['registrationNumber', 'make', 'model', 'category', 'seatingCapacity', 'airConditioned', 'amenities', 'imageUrl'];
     const changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+    if (Object.keys(changes).length) {
+      const activeBooking = await Booking.exists({ vehicleId: req.params.id, fleetId: req.user.fleetId, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
+      if (activeBooking) return res.status(409).json({ message: 'A vehicle cannot be edited during an active booking.' });
+      changes.verificationStatus = 'pending';
+    }
     const vehicle = await Vehicle.findOneAndUpdate({ _id: req.params.id, fleetId: req.user.fleetId }, changes, { new: true, runValidators: true });
     if (!vehicle) return res.status(404).json({ message: 'Vehicle not found.' });
+    if (Object.keys(changes).some((key) => key !== 'verificationStatus')) {
+      await VehicleDocument.updateMany({ vehicleId: vehicle.id }, { $set: { status: 'pending' }, $unset: { reviewedBy: 1, reviewedAt: 1 } });
+    }
     return res.json({ vehicle });
   } catch (error) { return next(error); }
 });
@@ -93,6 +111,8 @@ router.delete('/:id', allowRoles('individual_owner', 'fleet_company'), async (re
     vehicle.active = false;
     vehicle.trackingStatus = 'offline';
     vehicle.currentDriverId = undefined;
+    vehicle.latestLocation = undefined;
+    vehicle.lastLocationAt = undefined;
     await vehicle.save();
     return res.json({ vehicle });
   } catch (error) { return next(error); }
@@ -107,12 +127,26 @@ router.post('/:id/assignment', allowRoles('individual_owner', 'fleet_company'), 
     if (driver.fleetId && String(driver.fleetId) !== String(req.user.fleetId)) return res.status(409).json({ message: 'This driver is already associated with another fleet.' });
     const existing = await DriverVehicleAssignment.findOne({ driverId: driver.id, active: true });
     if (existing && String(existing.vehicleId) !== String(vehicle.id)) return res.status(409).json({ message: 'This driver is already assigned to another vehicle.' });
+    const previousAssignments = await DriverVehicleAssignment.find({ vehicleId: vehicle.id, active: true }).select('driverId');
     await DriverVehicleAssignment.updateMany({ vehicleId: vehicle.id, active: true }, { $set: { active: false, unassignedAt: new Date() } });
+    await User.updateMany({ $and: [
+      { _id: { $in: previousAssignments.map((assignment) => assignment.driverId) } },
+      { _id: { $ne: driver.id } }
+    ] }, { $set: { online: false } });
     await DriverVehicleAssignment.create({ fleetId: req.user.fleetId, driverId: driver.id, vehicleId: vehicle.id });
     vehicle.currentDriverId = driver.id;
+    vehicle.latestLocation = undefined;
+    vehicle.lastLocationAt = undefined;
+    vehicle.trackingStatus = 'offline';
     await vehicle.save();
     driver.fleetId = req.user.fleetId;
+    driver.online = false;
     await driver.save();
+    req.app.get('io').to(`fleet:${req.user.fleetId}`).emit('fleet:vehicle:status', { vehicleId: String(vehicle.id), trackingStatus: 'offline' });
+    req.app.get('io').to(`user:${driver.id}`).emit('driver:assignment:changed');
+    for (const assignment of previousAssignments) {
+      if (String(assignment.driverId) !== String(driver.id)) req.app.get('io').to(`user:${assignment.driverId}`).emit('driver:assignment:changed');
+    }
     return res.status(201).json({ vehicle, driver: { id: driver.id, name: driver.name, email: driver.email } });
   } catch (error) { return next(error); }
 });

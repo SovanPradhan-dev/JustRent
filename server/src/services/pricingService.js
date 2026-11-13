@@ -11,7 +11,7 @@ export function distanceInKilometres(origin, destination) {
   return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export async function calculateFare(category, origin, destination, estimatedMinutes = 0) {
+export async function calculateFare(category, origin, destination) {
   const pricing = await PricingConfiguration.findOne({ category, active: true, serviceAreaId: { $exists: false } }).sort({ updatedAt: -1 });
   if (!pricing) {
     const error = new Error(`Pricing is not configured for the ${category} category.`);
@@ -19,6 +19,7 @@ export async function calculateFare(category, origin, destination, estimatedMinu
     throw error;
   }
   const distance = distanceInKilometres(origin, destination);
+  const estimatedMinutes = pricing.averageSpeedKph > 0 ? distance / pricing.averageSpeedKph * 60 : 0;
   const baseFare = pricing.baseFare;
   const distanceFare = distance * pricing.perKilometre;
   const timeFare = Math.max(0, estimatedMinutes) * pricing.perMinute;
@@ -31,6 +32,7 @@ export async function calculateFare(category, origin, destination, estimatedMinu
     currency: pricing.currency, baseFare, distanceFare: Math.round(distanceFare * 100) / 100,
     timeFare: Math.round(timeFare * 100) / 100, waiting: 0, tolls: 0, parking: 0,
     taxes: Math.round(taxes * 100) / 100, platformFee, discount, total,
-    distanceKilometres: Math.round(distance * 100) / 100
+    distanceKilometres: Math.round(distance * 100) / 100,
+    estimatedMinutes: Math.round(estimatedMinutes)
   };
 }

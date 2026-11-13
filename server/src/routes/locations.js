@@ -27,7 +27,7 @@ router.get('/vehicles/:id/location', authenticate, async (req, res, next) => {
       }).select('_id status driverId');
     }
     if (!isFleetOwner && !isAssignedDriver && !booking) return res.status(403).json({ message: 'You are not authorized to view this vehicle location.' });
-    const latest = await DriverLocation.findOne({ vehicleId: vehicle.id }).sort({ timestamp: -1 }).select('-fleetId');
+    const latest = await DriverLocation.findOne({ vehicleId: vehicle.id, ...(booking && { bookingId: booking.id }) }).sort({ timestamp: -1 }).select('-fleetId');
     return res.json({ vehicle, location: latest });
   } catch (error) { return next(error); }
 });
@@ -38,7 +38,7 @@ router.get('/vehicles/:id/location-history', authenticate, allowRoles('individua
     if (!vehicle) return res.status(404).json({ message: 'Vehicle not found.' });
     const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 24 * 60 * 60 * 1000);
     const to = req.query.to ? new Date(req.query.to) : new Date();
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to || to - from > 31 * 86400000) {
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to || to - from > 32 * 86400000) {
       return res.status(400).json({ message: 'Provide a valid date range no longer than 31 days.' });
     }
     const locations = await DriverLocation.find({ vehicleId: vehicle.id, timestamp: { $gte: from, $lte: to } })

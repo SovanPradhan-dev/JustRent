@@ -7,6 +7,7 @@ const pricingConfigurationSchema = new mongoose.Schema({
   baseFare: { type: Number, min: 0, required: true },
   perKilometre: { type: Number, min: 0, required: true },
   perMinute: { type: Number, min: 0, default: 0 },
+  averageSpeedKph: { type: Number, min: 0, max: 150, default: 0 },
   minimumFare: { type: Number, min: 0, required: true },
   waitingPerMinute: { type: Number, min: 0, default: 0 },
   platformFee: { type: Number, min: 0, default: 0 },

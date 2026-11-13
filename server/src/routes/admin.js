@@ -172,7 +172,7 @@ router.put('/pricing/:category', async (req, res, next) => {
     const category = req.params.category;
     const allowed = ['sedan', 'suv', 'muv', 'tempo_traveller', 'bus', 'other'];
     if (!allowed.includes(category)) return res.status(400).json({ message: 'Unknown vehicle category.' });
-    const fields = ['baseFare', 'perKilometre', 'perMinute', 'minimumFare', 'waitingPerMinute', 'platformFee', 'taxRate', 'discount', 'active', 'currency'];
+    const fields = ['baseFare', 'perKilometre', 'perMinute', 'averageSpeedKph', 'minimumFare', 'waitingPerMinute', 'platformFee', 'taxRate', 'discount', 'active', 'currency'];
     const changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => fields.includes(key)));
     const pricing = await PricingConfiguration.findOneAndUpdate({ category, serviceAreaId: { $exists: false } }, { $set: { ...changes, category } }, { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true });
     await recordAudit(req, 'pricing.updated', 'PricingConfiguration', pricing.id, { category });
@@ -192,6 +192,7 @@ router.put('/settings', async (req, res, next) => {
   try {
     const allowed = ['publicBookingEnabled', 'complianceConfirmed', 'negotiatedPricingEnabled'];
     for (const key of allowed) if (req.body[key] !== undefined && typeof req.body[key] !== 'boolean') return res.status(400).json({ message: `${key} must be a boolean.` });
+    if (req.body.negotiatedPricingEnabled === true) return res.status(501).json({ message: 'Negotiated offers are not implemented and cannot be enabled.' });
     const current = Object.fromEntries((await PlatformSetting.find({ key: { $in: allowed } }).select('key value')).map((setting) => [setting.key, setting.value]));
     const complianceConfirmed = req.body.complianceConfirmed ?? current.complianceConfirmed ?? false;
     if (req.body.publicBookingEnabled === true && !complianceConfirmed) return res.status(409).json({ message: 'Confirm applicable local requirements before enabling public bookings.' });

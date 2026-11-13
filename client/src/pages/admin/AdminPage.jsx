@@ -10,7 +10,7 @@ const sections = [
   ['pricing','Pricing',SlidersHorizontal],['settings','Platform settings',Gauge],['audit-logs','Audit logs',Activity]
 ];
 const categories=['sedan','suv','muv','tempo_traveller','bus','other'];
-const fields=['baseFare','perKilometre','perMinute','minimumFare','waitingPerMinute','platformFee','taxRate','discount'];
+const fields=['baseFare','perKilometre','perMinute','averageSpeedKph','minimumFare','waitingPerMinute','platformFee','taxRate','discount'];
 
 export default function AdminPage(){
   const {user,logout}=useAuth();

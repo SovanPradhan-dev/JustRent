@@ -40,7 +40,7 @@ try {
   for (const [category, [baseFare, perKilometre, minimumFare]] of Object.entries(exampleRates)) {
     await PricingConfiguration.findOneAndUpdate(
       { category, serviceAreaId: { $exists: false } },
-      { $setOnInsert: { category, currency: 'INR', baseFare, perKilometre, perMinute: 0, minimumFare, platformFee: 0, taxRate: 0, discount: 0, active: true } },
+      { $setOnInsert: { category, currency: 'INR', baseFare, perKilometre, perMinute: 0, averageSpeedKph: 0, minimumFare, platformFee: 0, taxRate: 0, discount: 0, active: true } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   }

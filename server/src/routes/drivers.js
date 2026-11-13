@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { Booking, DriverProfile, DriverVehicleAssignment, User, Vehicle } from '../models/index.js';
+import { Booking, DriverDocument, DriverProfile, DriverVehicleAssignment, User, Vehicle } from '../models/index.js';
 
 const router = Router();
 
@@ -28,9 +28,10 @@ router.get('/me', authenticate, allowRoles('driver'), async (req, res, next) => 
     const assignment = await DriverVehicleAssignment.findOne({ driverId: req.user.id, active: true })
       .populate('vehicleId').populate('fleetId', 'name');
     const profile = await DriverProfile.findOne({ userId: req.user.id }).select('verificationStatus licenseExpiresAt averageRating completedTrips');
+    const currentUser = await User.findById(req.user.id).select('name email phone role online fleetId');
     const bookings = await Booking.find({ driverId: req.user.id }).sort({ pickupAt: -1 }).limit(25)
       .populate('passengerId', 'name phone').select('-pickupOtpHash');
-    return res.json({ driver: req.user, profile, assignment, bookings });
+    return res.json({ driver: currentUser, profile, assignment, bookings });
   } catch (error) { return next(error); }
 });
 
@@ -42,6 +43,7 @@ router.patch('/me/profile', authenticate, allowRoles('driver'), async (req, res,
     const profile = await DriverProfile.findOneAndUpdate({ userId: req.user.id }, {
       $set: { licenseNumber, licenseExpiresAt, verificationStatus: 'pending' }
     }, { upsert: true, new: true, runValidators: true }).select('verificationStatus licenseExpiresAt averageRating completedTrips');
+    await DriverDocument.updateMany({ driverId: req.user.id, kind: 'driver_license' }, { $set: { status: 'pending' }, $unset: { reviewedBy: 1, reviewedAt: 1 } });
     return res.json({ profile });
   } catch (error) { return next(error); }
 });

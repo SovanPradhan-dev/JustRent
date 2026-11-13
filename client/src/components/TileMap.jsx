@@ -21,7 +21,7 @@ function unproject(x, y, zoom) {
   return { latitude: 180 / Math.PI * Math.atan(Math.sinh(n)), longitude };
 }
 
-export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehicle, history = [], pickupPoint, destinationPoint }) {
+export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehicle, focusRequest, history = [], pickupPoint, destinationPoint }) {
   const [center, setCenter] = useState(DEFAULT_CENTER);
   const [zoom, setZoom] = useState(12);
   const [drag, setDrag] = useState(null);
@@ -56,7 +56,7 @@ export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehi
   };
   useEffect(() => {
     if (focusVehicle) reposition(focusVehicle);
-  }, [focusVehicle?._id, focusVehicle?.lastLocationAt, focusVehicle?.location?.timestamp]);
+  }, [focusVehicle?._id, focusVehicle?.lastLocationAt, focusVehicle?.location?.timestamp, focusRequest]);
   useEffect(() => {
     if (!surface.current || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(([entry]) => {
