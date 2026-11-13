@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { randomInt } from 'node:crypto';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { Booking, DriverLocation, DriverVehicleAssignment, Fleet, Trip, User, Vehicle } from '../models/index.js';
+import { Booking, DriverLocation, DriverProfile, DriverVehicleAssignment, Fleet, Trip, User, Vehicle } from '../models/index.js';
 import { calculateFare } from '../services/pricingService.js';
 import { canTransitionBooking } from '../services/bookingRules.js';
 import { platformSetting, publicBookingsEnabled } from '../services/platformSettings.js';
@@ -93,6 +93,8 @@ router.patch('/:id/accept', authenticate, allowRoles('individual_owner', 'fleet_
     if (!booking) return res.status(404).json({ message: 'Pending booking not found in your fleet.' });
     const assignment = await DriverVehicleAssignment.findOne({ fleetId: req.user.fleetId, vehicleId: req.body.vehicleId, driverId: req.body.driverId, active: true }).populate('driverId', 'online');
     if (!assignment?.driverId?.online) return res.status(400).json({ message: 'Choose a driver who is online and sharing availability.' });
+    const verifiedDriver = await DriverProfile.exists({ userId: assignment.driverId._id, verificationStatus: 'approved' });
+    if (!verifiedDriver) return res.status(409).json({ message: 'The assigned driver has not passed verification.' });
     const vehicle = assignment && await Vehicle.findOne({ _id: assignment.vehicleId, fleetId: req.user.fleetId, active: true, verificationStatus: 'approved' });
     if (!assignment || !vehicle || vehicle.seatingCapacity < booking.passengerCount) return res.status(400).json({ message: 'Choose a verified vehicle and its currently assigned driver with enough seats.' });
     const conflict = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: activeStatuses }, pickupAt: { $gte: new Date(Date.now() - 3 * 3600000), $lte: new Date(booking.pickupAt.getTime() + 3 * 3600000) } });
@@ -104,6 +106,7 @@ router.patch('/:id/accept', authenticate, allowRoles('individual_owner', 'fleet_
     await Trip.create({ bookingId: booking.id, fleetId: booking.fleetId, vehicleId: vehicle.id, driverId: assignment.driverId._id });
     const io = req.app.get('io');
     broadcast(io, booking, 'booking:accepted');
+    io.to(`user:${assignment.driverId._id}`).emit('booking:assigned', { bookingId: booking.id });
     io.to(`booking:${booking.id}`).emit('booking:confirmation', { bookingId: booking.id, status: booking.status });
     return res.json({ booking });
   } catch (error) { return next(error); }
@@ -156,8 +159,8 @@ router.patch('/:id/status', authenticate, async (req, res, next) => {
       await Trip.updateOne({ bookingId: booking.id }, { $set: tripUpdate });
       if (target === 'completed') await Vehicle.updateOne({ _id: booking.vehicleId }, { $set: { trackingStatus: 'online' } });
     }
-    if (['completed', 'cancelled', 'no_show'].includes(target)) await req.app.get('io').in(`booking:${booking.id}`).socketsLeave(`booking:${booking.id}`);
     broadcast(req.app.get('io'), booking, 'booking:status');
+    if (['completed', 'cancelled', 'no_show'].includes(target)) await req.app.get('io').in(`booking:${booking.id}`).socketsLeave(`booking:${booking.id}`);
     return res.json({ booking });
   } catch (error) { return next(error); }
 });

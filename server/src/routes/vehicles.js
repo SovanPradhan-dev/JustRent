@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { Booking, DriverVehicleAssignment, Fleet, User, Vehicle } from '../models/index.js';
+import { Booking, DriverProfile, DriverVehicleAssignment, Fleet, User, Vehicle } from '../models/index.js';
 import { calculateFare } from '../services/pricingService.js';
 import { publicBookingsEnabled } from '../services/platformSettings.js';
 
@@ -13,8 +13,8 @@ router.get('/', async (req, res, next) => {
     const query = { active: true, verificationStatus: 'approved' };
     if (category) query.category = category;
     if (passengers && Number.isInteger(Number(passengers))) query.seatingCapacity = { $gte: Number(passengers) };
-    const vehicles = await Vehicle.find(query).populate('fleetId', 'name verificationStatus').sort({ createdAt: -1 }).limit(100);
-    return res.json({ vehicles });
+    const vehicles = await Vehicle.find(query).populate({ path: 'fleetId', match: { verificationStatus: 'approved' }, select: 'name verificationStatus' }).sort({ createdAt: -1 }).limit(100);
+    return res.json({ vehicles: vehicles.filter((vehicle) => vehicle.fleetId) });
   } catch (error) { return next(error); }
 });
 
@@ -30,12 +30,16 @@ router.get('/search', allowRoles('passenger'), async (req, res, next) => {
     const filter = { active: true, verificationStatus: 'approved', seatingCapacity: { $gte: passengers } };
     if (req.query.category) filter.category = req.query.category;
     const candidates = await Vehicle.find(filter).populate({ path: 'fleetId', match: { verificationStatus: 'approved' }, select: 'name verificationStatus' }).limit(200);
+    const assignments = await DriverVehicleAssignment.find({ vehicleId: { $in: candidates.map((vehicle) => vehicle._id) }, active: true }).populate('driverId', 'name online').lean();
+    const assignmentByVehicle = new Map(assignments.map((assignment) => [String(assignment.vehicleId), assignment]));
+    const verifiedDriverIds = await DriverProfile.find({ userId: { $in: assignments.map((assignment) => assignment.driverId?._id).filter(Boolean) }, verificationStatus: 'approved' }).distinct('userId');
+    const verifiedDrivers = new Set(verifiedDriverIds.map(String));
     const vehicles = [];
     for (const vehicle of candidates) {
       if (!vehicle.fleetId) continue;
-      const assignment = await DriverVehicleAssignment.findOne({ vehicleId: vehicle.id, fleetId: vehicle.fleetId.id, active: true }).populate('driverId', 'name online');
-      if (!assignment?.driverId?.online) continue;
-      const activeTrip = await Booking.exists({ driverId: assignment.driverId.id, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
+      const assignment = assignmentByVehicle.get(String(vehicle.id));
+      if (!assignment?.driverId?.online || !verifiedDrivers.has(String(assignment.driverId._id))) continue;
+      const activeTrip = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
       if (activeTrip) continue;
       const fare = await calculateFare(vehicle.category, origin, destination, Number(req.query.estimatedMinutes || 0));
       vehicles.push({ vehicle, fleet: vehicle.fleetId, driver: assignment.driverId, fare });
@@ -62,7 +66,7 @@ router.post('/', allowRoles('individual_owner', 'fleet_company'), async (req, re
 
 router.patch('/:id', allowRoles('individual_owner', 'fleet_company'), async (req, res, next) => {
   try {
-    const allowed = ['registrationNumber', 'make', 'model', 'category', 'seatingCapacity', 'airConditioned', 'amenities', 'imageUrl', 'active'];
+    const allowed = ['registrationNumber', 'make', 'model', 'category', 'seatingCapacity', 'airConditioned', 'amenities', 'imageUrl'];
     const changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
     const vehicle = await Vehicle.findOneAndUpdate({ _id: req.params.id, fleetId: req.user.fleetId }, changes, { new: true, runValidators: true });
     if (!vehicle) return res.status(404).json({ message: 'Vehicle not found.' });
@@ -72,9 +76,17 @@ router.patch('/:id', allowRoles('individual_owner', 'fleet_company'), async (req
 
 router.delete('/:id', allowRoles('individual_owner', 'fleet_company'), async (req, res, next) => {
   try {
-    const vehicle = await Vehicle.findOneAndUpdate({ _id: req.params.id, fleetId: req.user.fleetId }, { active: false, trackingStatus: 'offline' }, { new: true });
+    const vehicle = await Vehicle.findOne({ _id: req.params.id, fleetId: req.user.fleetId });
     if (!vehicle) return res.status(404).json({ message: 'Vehicle not found.' });
+    const activeBooking = await Booking.exists({ vehicleId: vehicle.id, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
+    if (activeBooking) return res.status(409).json({ message: 'This vehicle cannot be deactivated during an active booking.' });
+    const assignments = await DriverVehicleAssignment.find({ vehicleId: vehicle.id, active: true }).select('driverId');
     await DriverVehicleAssignment.updateMany({ vehicleId: vehicle.id, active: true }, { $set: { active: false, unassignedAt: new Date() } });
+    await User.updateMany({ _id: { $in: assignments.map((assignment) => assignment.driverId) } }, { $set: { online: false } });
+    vehicle.active = false;
+    vehicle.trackingStatus = 'offline';
+    vehicle.currentDriverId = undefined;
+    await vehicle.save();
     return res.json({ vehicle });
   } catch (error) { return next(error); }
 });

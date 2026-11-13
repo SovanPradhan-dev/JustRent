@@ -11,6 +11,7 @@ import PassengerTrackingPage from './pages/passenger/PassengerTrackingPage.jsx';
 import PassengerDashboard from './pages/passenger/PassengerDashboard.jsx';
 import PassengerSearchPage from './pages/passenger/PassengerSearchPage.jsx';
 import FleetBookingsPage from './pages/fleet/FleetBookingsPage.jsx';
+import AdminPage from './pages/admin/AdminPage.jsx';
 
 export default function App() {
   return (
@@ -35,6 +36,9 @@ export default function App() {
         <Route path="/passenger" element={<PassengerDashboard />} />
         <Route path="/passenger/search" element={<PassengerSearchPage />} />
         <Route path="/passenger/tracking/:bookingId" element={<PassengerTrackingPage />} />
+      </Route>
+      <Route element={<ProtectedRoute roles={['admin']} />}>
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

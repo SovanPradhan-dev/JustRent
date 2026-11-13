@@ -10,6 +10,7 @@ import fleetRoutes from './routes/fleets.js';
 import bookingRoutes from './routes/bookings.js';
 import placeRoutes from './routes/places.js';
 import adminRoutes from './routes/admin.js';
+import documentRoutes from './routes/documents.js';
 import { errorHandler, notFound } from './middleware/errors.js';
 
 const app = express();
@@ -23,6 +24,7 @@ app.use('/api/drivers', driverRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/places', placeRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/documents', documentRoutes);
 app.use('/api/fleets', fleetRoutes);
 app.use('/api', locationRoutes);
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { AuditLog, Booking, DriverProfile, Fleet, PricingConfiguration, PlatformSetting, User, Vehicle } from '../models/index.js';
+import { AuditLog, Booking, DriverDocument, DriverProfile, DriverVehicleAssignment, Fleet, FleetDocument, PricingConfiguration, PlatformSetting, User, Vehicle, VehicleDocument } from '../models/index.js';
 
 const router = Router();
 router.use(authenticate, allowRoles('admin'));
@@ -34,6 +34,16 @@ router.get('/fleets', async (req, res, next) => {
 router.patch('/fleets/:id/verification', async (req, res, next) => {
   try {
     if (!['approved', 'rejected'].includes(req.body.status)) return res.status(400).json({ message: 'Verification status must be approved or rejected.' });
+    if (req.body.status === 'approved') {
+      const target = await Fleet.findById(req.params.id);
+      if (!target) return res.status(404).json({ message: 'Fleet not found.' });
+      const requiredKinds = target.businessType === 'company' ? ['owner_identity', 'company_registration'] : ['owner_identity'];
+      const approvedKinds = await FleetDocument.distinct('kind', {
+        fleetId: target.id, kind: { $in: requiredKinds }, status: 'approved',
+        $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }]
+      });
+      if (requiredKinds.some((kind) => !approvedKinds.includes(kind))) return res.status(409).json({ message: 'Review and approve the required, unexpired owner and company documents before approving this fleet.' });
+    }
     const fleet = await Fleet.findByIdAndUpdate(req.params.id, { verificationStatus: req.body.status }, { new: true, runValidators: true });
     if (!fleet) return res.status(404).json({ message: 'Fleet not found.' });
     await recordAudit(req, 'fleet.verification.updated', 'Fleet', fleet.id, { status: fleet.verificationStatus });
@@ -56,6 +66,11 @@ router.patch('/vehicles/:id/verification', async (req, res, next) => {
       const vehicle = await Vehicle.findById(req.params.id).populate('fleetId', 'verificationStatus');
       if (!vehicle) return res.status(404).json({ message: 'Vehicle not found.' });
       if (vehicle.fleetId?.verificationStatus !== 'approved') return res.status(409).json({ message: 'Approve the vehicle owner fleet before approving its vehicles.' });
+      const approvedKinds = await VehicleDocument.distinct('kind', {
+        vehicleId: vehicle.id, kind: { $in: ['vehicle_registration', 'insurance'] }, status: 'approved',
+        $or: [{ kind: 'vehicle_registration' }, { expiresAt: { $gt: new Date() } }]
+      });
+      if (!approvedKinds.includes('vehicle_registration') || !approvedKinds.includes('insurance')) return res.status(409).json({ message: 'Review and approve current registration and insurance documents before approving this vehicle.' });
       vehicle.verificationStatus = 'approved';
       await vehicle.save();
       await recordAudit(req, 'vehicle.verification.updated', 'Vehicle', vehicle.id, { status: vehicle.verificationStatus });
@@ -79,12 +94,68 @@ router.get('/drivers', async (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
+router.patch('/drivers/:id/verification', async (req, res, next) => {
+  try {
+    if (!['approved', 'rejected'].includes(req.body.status)) return res.status(400).json({ message: 'Verification status must be approved or rejected.' });
+    const driver = await User.findOne({ _id: req.params.id, role: 'driver' }).select('_id');
+    if (!driver) return res.status(404).json({ message: 'Driver not found.' });
+    if (req.body.status === 'approved') {
+      const profile = await DriverProfile.findOne({ userId: driver.id });
+      if (!profile?.licenseExpiresAt || profile.licenseExpiresAt <= new Date()) return res.status(409).json({ message: 'The driver must provide a current license expiry date before verification.' });
+      const approvedKinds = await DriverDocument.distinct('kind', {
+        driverId: driver.id, kind: { $in: ['driver_identity', 'driver_license'] }, status: 'approved',
+        $or: [{ kind: 'driver_identity' }, { expiresAt: { $gt: new Date() } }]
+      });
+      if (!approvedKinds.includes('driver_identity') || !approvedKinds.includes('driver_license')) return res.status(409).json({ message: 'Review and approve current driver identity and license documents before verification.' });
+    }
+    const profile = await DriverProfile.findOneAndUpdate({ userId: driver.id }, { $set: { verificationStatus: req.body.status } }, { upsert: true, new: true, runValidators: true });
+    await recordAudit(req, 'driver.verification.updated', 'DriverProfile', profile.id, { status: profile.verificationStatus });
+    return res.json({ profile });
+  } catch (error) { return next(error); }
+});
+
+router.get('/documents', async (req, res, next) => {
+  try {
+    const [fleets, vehicles, drivers] = await Promise.all([
+      FleetDocument.find().select('-storageKey').populate('fleetId', 'name').sort({ createdAt: -1 }).limit(200),
+      VehicleDocument.find().select('-storageKey').populate('vehicleId', 'registrationNumber').sort({ createdAt: -1 }).limit(200),
+      DriverDocument.find().select('-storageKey').populate('driverId', 'name email').sort({ createdAt: -1 }).limit(200)
+    ]);
+    return res.json({ documents: [
+      ...fleets.map((document) => ({ ...document.toJSON(), documentType: 'fleet' })),
+      ...vehicles.map((document) => ({ ...document.toJSON(), documentType: 'vehicle' })),
+      ...drivers.map((document) => ({ ...document.toJSON(), documentType: 'driver' }))
+    ] });
+  } catch (error) { return next(error); }
+});
+
+router.patch('/documents/:kind/:id/review', async (req, res, next) => {
+  try {
+    if (!['fleet', 'vehicle', 'driver'].includes(req.params.kind) || !['approved', 'rejected'].includes(req.body.status)) return res.status(400).json({ message: 'A supported document type and review status are required.' });
+    const Model = req.params.kind === 'fleet' ? FleetDocument : req.params.kind === 'vehicle' ? VehicleDocument : DriverDocument;
+    const document = await Model.findByIdAndUpdate(req.params.id, {
+      status: req.body.status, reviewedBy: req.user.id, reviewedAt: new Date(), rejectionReason: req.body.status === 'rejected' ? req.body.reason : undefined
+    }, { new: true, runValidators: true }).select('-storageKey');
+    if (!document) return res.status(404).json({ message: 'Document not found.' });
+    await recordAudit(req, 'document.reviewed', `${req.params.kind}Document`, document.id, { status: document.status });
+    return res.json({ document });
+  } catch (error) { return next(error); }
+});
+
 router.patch('/users/:id/status', async (req, res, next) => {
   try {
     if (!['active', 'suspended'].includes(req.body.status)) return res.status(400).json({ message: 'Account status must be active or suspended.' });
-    const user = await User.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true }).select('name email role status');
+    if (String(req.params.id) === String(req.user.id)) return res.status(409).json({ message: 'You cannot suspend your own administrator account.' });
+    const user = await User.findByIdAndUpdate(req.params.id, { status: req.body.status, ...(req.body.status === 'suspended' && { online: false }) }, { new: true }).select('name email role status');
     if (!user) return res.status(404).json({ message: 'User not found.' });
     await recordAudit(req, 'user.status.updated', 'User', user.id, { status: user.status });
+    if (user.status === 'suspended') {
+      if (user.role === 'driver') {
+        const assignments = await DriverVehicleAssignment.find({ driverId: user.id, active: true }).select('vehicleId');
+        await Vehicle.updateMany({ _id: { $in: assignments.map((assignment) => assignment.vehicleId) } }, { $set: { trackingStatus: 'offline' } });
+      }
+      req.app.get('io').in(`user:${user.id}`).disconnectSockets(true);
+    }
     return res.json({ user });
   } catch (error) { return next(error); }
 });

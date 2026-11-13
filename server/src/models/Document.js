@@ -17,7 +17,11 @@ const documentFields = {
   rejectionReason: { type: String, maxlength: 500 }
 };
 
-const options = { timestamps: true };
+const options = {
+  timestamps: true,
+  toJSON: { transform(_doc, ret) { delete ret.storageKey; return ret; } },
+  toObject: { transform(_doc, ret) { delete ret.storageKey; return ret; } }
+};
 export const VehicleDocument = mongoose.model('VehicleDocument', new mongoose.Schema({ ...documentFields, vehicleId: { ...documentFields.vehicleId, required: true } }, options));
 export const DriverDocument = mongoose.model('DriverDocument', new mongoose.Schema({ ...documentFields, driverId: { ...documentFields.driverId, required: true } }, options));
 export const FleetDocument = mongoose.model('FleetDocument', new mongoose.Schema({ ...documentFields, fleetId: { ...documentFields.fleetId, required: true } }, options));

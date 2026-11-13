@@ -126,7 +126,7 @@ export default function FleetTrackingPage() {
         </div>
         <div className="map-panel">
           <div className="map-panel-top"><span><MapPin size={15}/> KOLKATA, WEST BENGAL</span><span className="map-live"><i/> Updating live</span></div>
-          <TileMap vehicles={vehicles} selectedId={selectedId} onSelect={setSelectedId} focusVehicle={selected} history={history} />
+          <TileMap vehicles={vehicles} selectedId={selectedId} onSelect={setSelectedId} focusVehicle={selected} history={history} pickupPoint={selected?.activeBooking?.pickup?.location} destinationPoint={selected?.activeBooking?.destination?.location} />
         </div>
         <aside className={`vehicle-detail-panel ${historyOpen?'history-mode':''}`}>
           {selected ? <>

@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const driverProfileSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
   dateOfBirth: Date,
-  licenseNumber: { type: String, trim: true },
+  licenseNumber: { type: String, trim: true, select: false },
   licenseExpiresAt: Date,
   verificationStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending', index: true },
   emergencyContact: { name: String, phone: String },

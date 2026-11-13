@@ -21,13 +21,14 @@ function unproject(x, y, zoom) {
   return { latitude: 180 / Math.PI * Math.atan(Math.sinh(n)), longitude };
 }
 
-export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehicle, history = [] }) {
+export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehicle, history = [], pickupPoint, destinationPoint }) {
   const [center, setCenter] = useState(DEFAULT_CENTER);
   const [zoom, setZoom] = useState(12);
   const [drag, setDrag] = useState(null);
+  const [dimensions, setDimensions] = useState({ width: 900, height: 700 });
   const surface = useRef(null);
-  const width = surface.current?.clientWidth || 900;
-  const height = surface.current?.clientHeight || 700;
+  const width = dimensions.width;
+  const height = dimensions.height;
   const centerPixel = project(center.latitude, center.longitude, zoom);
   const startX = Math.floor((centerPixel.x - width / 2) / TILE_SIZE);
   const startY = Math.floor((centerPixel.y - height / 2) / TILE_SIZE);
@@ -40,6 +41,13 @@ export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehi
     const pixel = project(latitude, longitude, zoom);
     return { vehicle, x: pixel.x - centerPixel.x + width / 2, y: pixel.y - centerPixel.y + height / 2 };
   }).filter(Boolean), [vehicles, zoom, centerPixel.x, centerPixel.y, width, height]);
+  const waypointPosition = (point) => {
+    if (!point?.coordinates || point.coordinates.length !== 2) return null;
+    const pixel = project(point.coordinates[1], point.coordinates[0], zoom);
+    return { x: pixel.x - centerPixel.x + width / 2, y: pixel.y - centerPixel.y + height / 2 };
+  };
+  const pickupPosition = waypointPosition(pickupPoint);
+  const destinationPosition = waypointPosition(destinationPoint);
 
   const reposition = (vehicle) => {
     const latitude = vehicle.location?.latitude ?? vehicle.latestLocation?.coordinates?.[1];
@@ -49,6 +57,14 @@ export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehi
   useEffect(() => {
     if (focusVehicle) reposition(focusVehicle);
   }, [focusVehicle?._id, focusVehicle?.lastLocationAt, focusVehicle?.location?.timestamp]);
+  useEffect(() => {
+    if (!surface.current || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      setDimensions({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(surface.current);
+    return () => observer.disconnect();
+  }, []);
 
   const onPointerDown = (event) => {
     if (event.target.closest('button')) return;
@@ -81,6 +97,8 @@ export default function TileMap({ vehicles = [], selectedId, onSelect, focusVehi
           <span className="marker-dot" /><span className="marker-label">{vehicle.registrationNumber}</span>
         </button>
       ))}
+      {pickupPosition && <div className="map-waypoint pickup-waypoint" style={{ left: pickupPosition.x, top: pickupPosition.y }}><span>P</span><small>Pickup</small></div>}
+      {destinationPosition && <div className="map-waypoint destination-waypoint" style={{ left: destinationPosition.x, top: destinationPosition.y }}><span>D</span><small>Destination</small></div>}
       <div className="map-controls">
         <button type="button" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(18, value + 1))}><Plus size={18} /></button>
         <button type="button" aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(3, value - 1))}><Minus size={18} /></button>

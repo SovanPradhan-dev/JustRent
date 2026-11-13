@@ -14,7 +14,7 @@ const driverLocationSchema = new mongoose.Schema({
   speed: { type: Number, min: 0, max: 400 },
   heading: { type: Number, min: 0, max: 360 },
   accuracy: { type: Number, min: 0, max: 10000 },
-  timestamp: { type: Date, required: true, index: true }
+  timestamp: { type: Date, required: true }
 }, { timestamps: true });
 
 driverLocationSchema.index({ location: '2dsphere' });

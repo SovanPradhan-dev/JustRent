@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
-import { Booking, DriverVehicleAssignment, User, Vehicle } from '../models/index.js';
+import { Booking, DriverProfile, DriverVehicleAssignment, User, Vehicle } from '../models/index.js';
 
 const router = Router();
 
@@ -11,6 +11,7 @@ router.patch('/availability', authenticate, allowRoles('driver'), async (req, re
     if (!req.body.online && activeTrip) return res.status(409).json({ message: 'You cannot stop location sharing during an active booking.' });
     const assignment = await DriverVehicleAssignment.findOne({ driverId: req.user.id, active: true });
     if (req.body.online && !assignment) return res.status(409).json({ message: 'Ask your fleet owner to assign a vehicle before going online.' });
+    if (req.body.online && !(await DriverProfile.exists({ userId: req.user.id, verificationStatus: 'approved' }))) return res.status(409).json({ message: 'Your driver profile must be verified before you can go online.' });
     const user = await User.findByIdAndUpdate(req.user.id, { online: req.body.online }, { new: true }).select('_id online');
     if (assignment) {
       await Vehicle.updateOne({ _id: assignment.vehicleId, fleetId: assignment.fleetId }, {
@@ -26,9 +27,22 @@ router.get('/me', authenticate, allowRoles('driver'), async (req, res, next) => 
   try {
     const assignment = await DriverVehicleAssignment.findOne({ driverId: req.user.id, active: true })
       .populate('vehicleId').populate('fleetId', 'name');
+    const profile = await DriverProfile.findOne({ userId: req.user.id }).select('verificationStatus licenseExpiresAt averageRating completedTrips');
     const bookings = await Booking.find({ driverId: req.user.id }).sort({ pickupAt: -1 }).limit(25)
       .populate('passengerId', 'name phone').select('-pickupOtpHash');
-    return res.json({ driver: req.user, assignment, bookings });
+    return res.json({ driver: req.user, profile, assignment, bookings });
+  } catch (error) { return next(error); }
+});
+
+router.patch('/me/profile', authenticate, allowRoles('driver'), async (req, res, next) => {
+  try {
+    const licenseNumber = String(req.body.licenseNumber || '').trim();
+    const licenseExpiresAt = new Date(req.body.licenseExpiresAt);
+    if (!licenseNumber || licenseNumber.length > 80 || Number.isNaN(licenseExpiresAt.getTime())) return res.status(400).json({ message: 'A valid license number and expiry date are required.' });
+    const profile = await DriverProfile.findOneAndUpdate({ userId: req.user.id }, {
+      $set: { licenseNumber, licenseExpiresAt, verificationStatus: 'pending' }
+    }, { upsert: true, new: true, runValidators: true }).select('verificationStatus licenseExpiresAt averageRating completedTrips');
+    return res.json({ profile });
   } catch (error) { return next(error); }
 });
 

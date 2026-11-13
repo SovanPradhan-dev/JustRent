@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { authenticate, allowRoles } from '../middleware/auth.js';
 import { saveDriverLocation } from '../services/locationService.js';
-import { DriverLocation, DriverVehicleAssignment, Vehicle, Booking } from '../models/index.js';
+import { DriverLocation, Vehicle, Booking } from '../models/index.js';
+import rateLimit from 'express-rate-limit';
 
 const router = Router();
 
-router.post('/update', authenticate, allowRoles('driver'), async (req, res, next) => {
+router.post('/update', rateLimit({ windowMs: 60 * 1000, limit: 120 }), authenticate, allowRoles('driver'), async (req, res, next) => {
   try {
     const record = await saveDriverLocation(req.user, req.body, req.app.get('io'));
     return res.status(201).json({ location: record });
@@ -43,30 +44,6 @@ router.get('/vehicles/:id/location-history', authenticate, allowRoles('individua
     const locations = await DriverLocation.find({ vehicleId: vehicle.id, timestamp: { $gte: from, $lte: to } })
       .sort({ timestamp: 1 }).limit(10000).select('driverId bookingId latitude longitude speed heading accuracy timestamp');
     return res.json({ locations, count: locations.length });
-  } catch (error) { return next(error); }
-});
-
-router.get('/fleets/me/vehicles/locations', authenticate, allowRoles('individual_owner', 'fleet_company'), async (req, res, next) => {
-  try {
-    const vehicles = await Vehicle.find({ fleetId: req.user.fleetId }).populate('currentDriverId', 'name phone online').lean();
-    const driverIds = vehicles.map((vehicle) => vehicle.currentDriverId?._id).filter(Boolean);
-    const assignments = await DriverVehicleAssignment.find({ fleetId: req.user.fleetId, active: true, driverId: { $in: driverIds } }).select('driverId vehicleId').lean();
-    const assignmentByDriver = new Map(assignments.map((item) => [String(item.driverId), String(item.vehicleId)]));
-    const vehicleIds = vehicles.map((vehicle) => vehicle._id);
-    const activeBookings = await Booking.find({ fleetId: req.user.fleetId, vehicleId: { $in: vehicleIds }, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } })
-      .select('_id vehicleId driverId status pickup destination pickupAt').lean();
-    const bookingsByVehicle = new Map(activeBookings.map((item) => [String(item.vehicleId), item]));
-    const results = vehicles.map((vehicle) => {
-      const currentBooking = bookingsByVehicle.get(String(vehicle._id));
-      const locationAge = vehicle.lastLocationAt ? Date.now() - new Date(vehicle.lastLocationAt).getTime() : Infinity;
-      return {
-        ...vehicle,
-        trackingStatus: locationAge > 120000 && vehicle.trackingStatus !== 'offline' ? 'stale' : vehicle.trackingStatus,
-        assignedDriver: vehicle.currentDriverId && assignmentByDriver.get(String(vehicle.currentDriverId._id)) === String(vehicle._id) ? vehicle.currentDriverId : null,
-        activeBooking: currentBooking || null
-      };
-    });
-    return res.json({ vehicles: results });
   } catch (error) { return next(error); }
 });
 

@@ -3,6 +3,7 @@ import { AlertCircle, ArrowRight, Bell, CarFront, Check, Clock3, LocateFixed, Ma
 import { Link } from 'react-router-dom';
 import { Brand } from '../../components/Brand.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useSocket } from '../../hooks/useSocket.js';
 import { api, getApiError } from '../../services/api.js';
 
 const stateLabels = {
@@ -12,6 +13,7 @@ const stateLabels = {
 
 export default function DriverPage() {
   const { user, logout } = useAuth();
+  const socket = useSocket();
   const watchId = useRef(null);
   const [driverData, setDriverData] = useState(null);
   const [trackingState, setTrackingState] = useState('offline');
@@ -20,6 +22,11 @@ export default function DriverPage() {
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [profileForm, setProfileForm] = useState({licenseNumber:'',licenseExpiresAt:''});
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [documentKind, setDocumentKind] = useState('driver_license');
+  const [documentFile, setDocumentFile] = useState(null);
+  const [documentExpiry, setDocumentExpiry] = useState('');
 
   const stopWatch = useCallback(() => {
     if (watchId.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId.current);
@@ -35,6 +42,12 @@ export default function DriverPage() {
     }).catch((e)=>{if(active)setError(getApiError(e));}).finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;stopWatch();};
   }, [stopWatch]);
+  useEffect(()=>{
+    if(!socket)return undefined;
+    const refresh=()=>api.get('/drivers/me').then(({data})=>setDriverData(data)).catch((e)=>setError(getApiError(e)));
+    socket.on('booking:assigned',refresh);
+    return()=>socket.off('booking:assigned',refresh);
+  },[socket]);
 
   const sendPosition = useCallback(async (position, vehicleId) => {
     const coords = position.coords;
@@ -115,6 +128,8 @@ export default function DriverPage() {
     } catch (requestError) { setError(getApiError(requestError)); }
     finally { setActionBusy(false); }
   };
+  const saveProfile=async(event)=>{event.preventDefault();setProfileBusy(true);setError('');try{await api.patch('/drivers/me/profile',profileForm);const {data}=await api.get('/drivers/me');setDriverData(data);}catch(e){setError(getApiError(e));}finally{setProfileBusy(false);}};
+  const uploadDriverDocument=async(event)=>{event.preventDefault();if(!documentFile){setError('Choose a document file to upload.');return;}const body=new FormData();body.append('document',documentFile);body.append('kind',documentKind);if(documentExpiry)body.append('expiresAt',documentExpiry);setError('');try{await api.post('/documents/driver',body,{headers:{'Content-Type':'multipart/form-data'}});setDocumentFile(null);event.currentTarget.reset();setError('Document uploaded for administrator review.');}catch(e){setError(getApiError(e));}};
 
   const assignment = driverData?.assignment;
   const status = stateLabels[trackingState] || stateLabels.offline;
@@ -127,6 +142,7 @@ export default function DriverPage() {
       {loading?<div className="driver-loading">Loading your workspace…</div>:<>
         <div className="driver-columns"><div className="driver-main-column">
           <section className="driver-card assigned-card"><div className="driver-card-heading"><div><span className="eyebrow">TODAY’S ASSIGNMENT</span><h2>Your vehicle</h2></div><span className="driver-card-icon"><CarFront size={20}/></span></div>{assignment?.vehicleId?<div className="assigned-vehicle"><div className="assigned-car-art"><CarFront size={38}/></div><div className="assigned-car-info"><b>{assignment.vehicleId.registrationNumber}</b><span>{assignment.vehicleId.make} {assignment.vehicleId.model}</span><small>{assignment.vehicleId.seatingCapacity} seats · {assignment.vehicleId.airConditioned?'Air conditioned':'Non-AC'}</small></div><span className="assignment-active"><i/> Assigned</span></div>:<div className="driver-empty"><CarFront size={24}/><b>No vehicle assignment yet</b><span>Your fleet owner can assign a vehicle to your driver account.</span></div>}</section>
+          <section className="driver-card"><div className="driver-card-heading"><div><span className="eyebrow">DRIVER VERIFICATION</span><h2>License profile</h2></div><span className={`admin-status ${driverData?.profile?.verificationStatus||'pending'}`}>{driverData?.profile?.verificationStatus||'pending'}</span></div><form className="driver-profile-form" onSubmit={saveProfile}><label>Driver license number<input value={profileForm.licenseNumber} onChange={(e)=>setProfileForm({...profileForm,licenseNumber:e.target.value})} required maxLength={80}/></label><label>License expiry date<input type="date" min={new Date().toISOString().slice(0,10)} value={profileForm.licenseExpiresAt} onChange={(e)=>setProfileForm({...profileForm,licenseExpiresAt:e.target.value})} required/></label><button disabled={profileBusy}>{profileBusy?'Saving…':'Save license details'}</button></form><form className="driver-document-form" onSubmit={uploadDriverDocument}><label>Document type<select value={documentKind} onChange={(e)=>setDocumentKind(e.target.value)}><option value="driver_license">Driver license</option><option value="driver_identity">Driver identity</option><option value="other">Other required document</option></select></label><label>Document file<input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" onChange={(e)=>setDocumentFile(e.target.files?.[0]||null)} required/></label>{documentKind==='driver_license'&&<label>Document expiry<input type="date" value={documentExpiry} onChange={(e)=>setDocumentExpiry(e.target.value)} required/></label>}<button>Upload for review</button></form><p className="document-security-note"><ShieldCheck size={14}/> Files are private and visible only to you and authorized administrators or fleet owners.</p></section>
           <section className="driver-card journey-card"><div className="driver-card-heading"><div><span className="eyebrow">{activeBooking?'CURRENT JOURNEY':'STAY READY'}</span><h2>{activeBooking?'Your active booking':'No active journey'}</h2></div><span className="driver-card-icon"><Navigation size={19}/></span></div>{activeBooking?<><div className="journey-stops"><div className="journey-stop"><span className="stop-dot pickup"/><div><small>PICKUP</small><b>{activeBooking.pickup?.label}</b></div></div><span className="journey-dash"/><div className="journey-stop"><span className="stop-dot destination"/><div><small>DESTINATION</small><b>{activeBooking.destination?.label}</b></div></div></div><div className="passenger-contact"><span className="passenger-avatar">{activeBooking.passengerId?.name?.slice(0,1)}</span><div><b>{activeBooking.passengerId?.name}</b><small>Passenger · {activeBooking.passengerCount} travelling</small></div>{activeBooking.passengerId?.phone&&<a href={`tel:${activeBooking.passengerId.phone}`}><Phone size={16}/> Call passenger</a>}</div><div className="driver-booking-status">Journey status: {activeBooking.status?.replaceAll('_',' ')}</div><div className="driver-trip-actions">{activeBooking.status==='confirmed'&&<button disabled={actionBusy} onClick={()=>updateBookingStatus('driver_accepted')}>Accept booking</button>}{activeBooking.status==='driver_accepted'&&<button disabled={actionBusy} onClick={()=>updateBookingStatus('driver_arriving')}>Head to pickup</button>}{activeBooking.status==='driver_arriving'&&<button disabled={actionBusy} onClick={()=>updateBookingStatus('arrived')}>Arrived at pickup</button>}{activeBooking.status==='arrived'&&<span>Ask your passenger for their six-digit pickup verification code.</span>}{activeBooking.status==='otp_verified'&&<button disabled={actionBusy} onClick={()=>updateBookingStatus('in_progress')}>Start trip</button>}{activeBooking.status==='in_progress'&&<button disabled={actionBusy} onClick={()=>updateBookingStatus('completed')}>Complete trip</button>}</div></>:<div className="driver-empty"><MapPin size={22}/><span>When your fleet assigns a booking, your pickup and destination will appear here.</span></div>}</section>
         </div><aside className="driver-side-column">
           <section className="driver-card gps-card"><span className="eyebrow">GPS STATUS</span><div className={`gps-state-icon ${status[1]}`}>{trackingState==='online'?<SignalHigh size={20}/>:<Signal size={20}/>}</div><h3>{trackingState==='online'?'Location sharing is on':trackingState==='denied'?'Permission needed':trackingState==='unavailable'?'GPS unavailable':'You’re offline'}</h3><p>{location?`Last update ${new Date(location.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'Your position will update here when you start sharing.'}</p>{location&&<div className="gps-coordinates"><MapPin size={14}/>{location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}</div>}<div className="gps-quality"><span><Clock3 size={14}/> {location?.accuracy?`±${Math.round(location.accuracy)}m accuracy`:'Waiting for GPS'}</span>{location?.speed!=null&&<span><Navigation size={14}/>{Math.round(location.speed*3.6)} km/h</span>}</div></section>

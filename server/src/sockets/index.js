@@ -20,6 +20,7 @@ export function attachSockets(io) {
 
   io.on('connection', (socket) => {
     const user = socket.data.user;
+    socket.join(`user:${user.id}`);
     socket.on('fleet:tracking:subscribe', async (payload = {}, acknowledge = () => {}) => {
       if (!['individual_owner', 'fleet_company'].includes(user.role) || String(user.fleetId) !== String(payload.fleetId)) {
         acknowledge({ error: 'Not authorized for this fleet.' });
@@ -45,6 +46,8 @@ export function attachSockets(io) {
     });
     socket.on('driver:location:update', async (payload = {}, acknowledge = () => {}) => {
       if (user.role !== 'driver') return acknowledge({ error: 'Driver account required.' });
+      if (Date.now() - (socket.data.lastLocationAt || 0) < 1000) return acknowledge({ error: 'Location updates are limited to one per second.' });
+      socket.data.lastLocationAt = Date.now();
       try {
         await saveDriverLocation(user, payload, io);
         return acknowledge({ ok: true });
