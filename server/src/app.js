@@ -1,0 +1,32 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import authRoutes from './routes/auth.js';
+import vehicleRoutes from './routes/vehicles.js';
+import driverRoutes from './routes/drivers.js';
+import locationRoutes from './routes/locations.js';
+import fleetRoutes from './routes/fleets.js';
+import bookingRoutes from './routes/bookings.js';
+import placeRoutes from './routes/places.js';
+import adminRoutes from './routes/admin.js';
+import { errorHandler, notFound } from './middleware/errors.js';
+
+const app = express();
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: process.env.CLIENT_ORIGIN?.split(',') || 'http://localhost:5173', credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 100 }), authRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/drivers', driverRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/places', placeRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/fleets', fleetRoutes);
+app.use('/api', locationRoutes);
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+app.use(notFound);
+app.use(errorHandler);
+
+export default app;

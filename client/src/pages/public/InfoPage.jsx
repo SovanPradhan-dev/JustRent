@@ -1,0 +1,7 @@
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
+import { Brand } from '../../components/Brand.jsx';
+
+export default function AboutPage() {
+  return <div className="min-h-screen bg-white"><header className="public-nav"><Brand /><nav className="hidden md:flex gap-7"><Link to="/">Home</Link><a href="#story">Our approach</a></nav><Link to="/register" className="button button-dark !px-5 !py-2.5">Become a partner <ArrowRight size={15} /></Link></header><main className="info-page"><span className="eyebrow">A BETTER WAY TO MOVE</span><h1>Good journeys connect us.</h1><p>Vehicle Connect brings passengers and professional commercial fleets together with thoughtful technology, clear information and trusted people.</p><section id="story"><h2>Built around the journey.</h2><p>We believe booking a vehicle should feel straightforward and informed. Our platform is being built for passengers, independent vehicle owners, fleet companies and professional drivers—each with tools designed around how they work.</p></section><section><h2>Starting in Kolkata.</h2><p>Our first service area is Kolkata, West Bengal. We are keeping public booking activation behind an administrative compliance gate while applicable operating requirements are confirmed.</p></section><Link className="button button-dark" to="/register">Join Vehicle Connect <ArrowRight size={16} /></Link></main></div>;
+}
