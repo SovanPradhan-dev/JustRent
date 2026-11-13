@@ -3,6 +3,7 @@ import { authenticate, allowRoles } from '../middleware/auth.js';
 import { Booking, DriverProfile, DriverVehicleAssignment, Fleet, User, Vehicle } from '../models/index.js';
 import { calculateFare } from '../services/pricingService.js';
 import { publicBookingsEnabled } from '../services/platformSettings.js';
+import { driverComplianceApproved, fleetComplianceApproved, vehicleComplianceApproved } from '../services/complianceService.js';
 
 const router = Router();
 router.use(authenticate);
@@ -39,6 +40,12 @@ router.get('/search', allowRoles('passenger'), async (req, res, next) => {
       if (!vehicle.fleetId) continue;
       const assignment = assignmentByVehicle.get(String(vehicle.id));
       if (!assignment?.driverId?.online || !verifiedDrivers.has(String(assignment.driverId._id))) continue;
+      const [fleetCompliant, vehicleCompliant, driverCompliant] = await Promise.all([
+        fleetComplianceApproved(vehicle.fleetId),
+        vehicleComplianceApproved(vehicle.id),
+        driverComplianceApproved(assignment.driverId._id)
+      ]);
+      if (!fleetCompliant || !vehicleCompliant || !driverCompliant) continue;
       const activeTrip = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'] } });
       if (activeTrip) continue;
       const fare = await calculateFare(vehicle.category, origin, destination, Number(req.query.estimatedMinutes || 0));

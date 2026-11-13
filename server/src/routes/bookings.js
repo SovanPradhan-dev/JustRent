@@ -6,6 +6,7 @@ import { Booking, DriverLocation, DriverProfile, DriverVehicleAssignment, Fleet,
 import { calculateFare } from '../services/pricingService.js';
 import { canTransitionBooking } from '../services/bookingRules.js';
 import { platformSetting, publicBookingsEnabled } from '../services/platformSettings.js';
+import { driverComplianceApproved, fleetComplianceApproved, vehicleComplianceApproved } from '../services/complianceService.js';
 
 const router = Router();
 const activeStatuses = ['confirmed', 'driver_accepted', 'driver_arriving', 'arrived', 'otp_verified', 'in_progress'];
@@ -34,6 +35,10 @@ router.post('/', authenticate, allowRoles('passenger'), async (req, res, next) =
     }
     const vehicle = await Vehicle.findOne({ _id: vehicleId, active: true, verificationStatus: 'approved' }).populate('fleetId');
     if (!vehicle || !vehicle.fleetId || vehicle.fleetId.verificationStatus !== 'approved') return res.status(404).json({ message: 'This vehicle is not available for booking.' });
+    const [fleetCompliant, vehicleCompliant] = await Promise.all([
+      fleetComplianceApproved(vehicle.fleetId), vehicleComplianceApproved(vehicle.id)
+    ]);
+    if (!fleetCompliant || !vehicleCompliant) return res.status(409).json({ message: 'This fleet or vehicle is missing current, approved compliance documents.' });
     if (vehicle.seatingCapacity < Number(passengerCount)) return res.status(400).json({ message: 'This vehicle does not have enough seats for your passengers.' });
     const fare = await calculateFare(vehicle.category, pickupCoordinates, destinationCoordinates, Number(req.body.estimatedMinutes || 0));
     const pickupCode = String(randomInt(100000, 1000000));
@@ -94,7 +99,12 @@ router.patch('/:id/accept', authenticate, allowRoles('individual_owner', 'fleet_
     const assignment = await DriverVehicleAssignment.findOne({ fleetId: req.user.fleetId, vehicleId: req.body.vehicleId, driverId: req.body.driverId, active: true }).populate('driverId', 'online');
     if (!assignment?.driverId?.online) return res.status(400).json({ message: 'Choose a driver who is online and sharing availability.' });
     const verifiedDriver = await DriverProfile.exists({ userId: assignment.driverId._id, verificationStatus: 'approved' });
-    if (!verifiedDriver) return res.status(409).json({ message: 'The assigned driver has not passed verification.' });
+    if (!verifiedDriver || !(await driverComplianceApproved(assignment.driverId._id))) return res.status(409).json({ message: 'The assigned driver is missing current, approved compliance documents.' });
+    const [fleetCompliant, vehicleCompliant] = await Promise.all([
+      fleetComplianceApproved({ id: req.user.fleetId, businessType: (await Fleet.findById(req.user.fleetId).select('businessType'))?.businessType }),
+      vehicleComplianceApproved(req.body.vehicleId)
+    ]);
+    if (!fleetCompliant || !vehicleCompliant) return res.status(409).json({ message: 'This fleet or vehicle is missing current, approved compliance documents.' });
     const vehicle = assignment && await Vehicle.findOne({ _id: assignment.vehicleId, fleetId: req.user.fleetId, active: true, verificationStatus: 'approved' });
     if (!assignment || !vehicle || vehicle.seatingCapacity < booking.passengerCount) return res.status(400).json({ message: 'Choose a verified vehicle and its currently assigned driver with enough seats.' });
     const conflict = await Booking.exists({ driverId: assignment.driverId._id, status: { $in: activeStatuses }, pickupAt: { $gte: new Date(Date.now() - 3 * 3600000), $lte: new Date(booking.pickupAt.getTime() + 3 * 3600000) } });
